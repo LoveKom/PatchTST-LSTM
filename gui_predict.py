@@ -255,7 +255,7 @@ def forecast_autoregressive():
     for date, prediction in zip(forecast_dates, hybrid_predictions_real_scale):
         forecast_table.insert('', 'end', values=(date.strftime('%Y-%m-%d'), f"${prediction:,.2f}"))
 
-    # --- Recommendations text ---
+    # Текст рекомендаций
     min_price = float(np.min(hybrid_predictions_real_scale))
     max_price = float(np.max(hybrid_predictions_real_scale))
     last_price = float(btc_data['y'].iloc[-1])
@@ -264,17 +264,17 @@ def forecast_autoregressive():
     direction = "рост" if pct_change >= 0 else "снижение"
     trend_assessment = "благоприятный" if pct_change >= 0 else "неблагоприятный"
     if abs(pct_change) <= 1:
-        action_text = "Однако изменение цены не превышает 1%, лучше удерживать.\n"
+        action_text = "Однако изменение цены на горизонте прогноза минимально (≤1%). Рекомендуется удерживать позицию, несмотря на возможные кратковременные просадки"
     else:
         action_text = "покупка и удержание на период прогноза" if pct_change >= 0 else "продажа и ожидание коррекции на период прогноза"
     max_drawdown = compute_max_drawdown(np.array(hybrid_predictions_real_scale))
 
     recommendation = (
-        f"Прогноз диапазона цены: от {min_price:.2f} до {max_price:.2f} USD за ближайшие {forecast_horizon} дней\n\n"
+        f"Модель предсказывает разброс цены от {min_price:.2f} до {max_price:.2f} USD за ближайшие {forecast_horizon} дней\n\n"
         f"Рекомендация:\n"
         f"Ожидается {direction} на {abs(pct_change):.2f}% — тренд оценивается как {trend_assessment}.\n"
         f"Максимальная просадка на {forecast_horizon}-дневном горизонте: {max_drawdown:.2f}%.\n"
-        f"Совет: {action_text}"
+        f"Совет: {action_text}.\n"
     )
 
     log_progress(recommendation)
