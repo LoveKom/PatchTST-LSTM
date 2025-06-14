@@ -127,6 +127,8 @@ def load_model():
     if not model_dir:
         return
 
+    hide_progress_bar()
+
     try:
         global patch_model, lstm_model, hyb_model, scaler, btc_data
 
@@ -186,6 +188,7 @@ def train_model():
 
 
 def run_training(start_date: str, end_date: str):
+    root.after(0, show_progress_bar)
     root.after(0, log_progress, f"Старт обучения с {start_date} по {end_date}...")
     try:
         import transformer_lstm
@@ -200,9 +203,11 @@ def run_training(start_date: str, end_date: str):
 
         transformer_lstm.main()
         root.after(0, log_progress, "Обучение завершено.")
+        root.after(0, hide_progress_bar)
         messagebox.showinfo("Обучение", "Обучение успешно завершено")
     except Exception as exc:
         root.after(0, log_progress, f"Ошибка обучения: {exc}")
+        root.after(0, hide_progress_bar)
         messagebox.showerror("Ошибка", str(exc))
 
 
@@ -337,11 +342,25 @@ scrollbar = tk.Scrollbar(progress_frame, command=progress_text.yview)
 scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 progress_text['yscrollcommand'] = scrollbar.set
 
+# Progress bar at the very bottom. Hidden by default
+progress_bar = ttk.Progressbar(root, mode='indeterminate')
+progress_bar.pack(fill=tk.X, padx=10, pady=(0, 10))
+progress_bar.pack_forget()
+
 def log_progress(message: str):
     progress_text.configure(state='normal')
     progress_text.insert(tk.END, message + '\n')
     progress_text.see(tk.END)
     progress_text.configure(state='disabled')
+
+def show_progress_bar():
+    progress_bar.pack(fill=tk.X, padx=10, pady=(0, 10))
+    progress_bar.start()
+
+
+def hide_progress_bar():
+    progress_bar.stop()
+    progress_bar.pack_forget()
 
 # Запуск окна приложения
 root.protocol("WM_DELETE_WINDOW", on_closing)
