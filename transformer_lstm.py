@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import pandas as pd
 
 from data_utils import load_data
 from train_models import train_patch_model, train_lstm_model, train_hybrid_model
@@ -81,6 +82,7 @@ def main():
             hyb_predictions.extend(hyb_pred)
             forecast_dates.append(data.test_data['ds'].iloc[idx + CONTEXT_LENGTH])
 
+    forecast_dates = pd.to_datetime(forecast_dates)
     real_prices = data.scaler.inverse_transform(np.array(real_values).reshape(-1, 1)).flatten()
     hyb_prices = data.scaler.inverse_transform(np.array(hyb_predictions).reshape(-1, 1)).flatten()
 
