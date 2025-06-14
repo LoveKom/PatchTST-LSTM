@@ -263,22 +263,21 @@ def forecast_autoregressive():
     pct_change = (last_forecast - last_price) / last_price * 100
     direction = "рост" if pct_change >= 0 else "снижение"
     trend_assessment = "благоприятный" if pct_change >= 0 else "неблагоприятный"
-    action_text = "покупка и удержание" if pct_change >= 0 else "продажа и ожидание коррекции"
+    if abs(pct_change) <= 1:
+        action_text = "Однако изменение цены не превышает 1%, лучше удерживать.\n"
+    else:
+        action_text = "покупка и удержание на период прогноза" if pct_change >= 0 else "продажа и ожидание коррекции на период прогноза"
     max_drawdown = compute_max_drawdown(np.array(hybrid_predictions_real_scale))
-
-    hold_text = "Изменение цены не превышает 1%, лучше удерживать." if abs(pct_change) <= 1 else ""
 
     recommendation = (
         f"Прогноз диапазона цены: от {min_price:.2f} до {max_price:.2f} USD за ближайшие {forecast_horizon} дней\n\n"
         f"Рекомендация:\n"
         f"Ожидается {direction} на {abs(pct_change):.2f}% — тренд оценивается как {trend_assessment}.\n"
-        f"Совет: {action_text} на период прогноза"
+        f"Максимальная просадка на {forecast_horizon}-дневном горизонте: {max_drawdown:.2f}%.\n"
+        f"Совет: {action_text}"
     )
 
     log_progress(recommendation)
-    log_progress(f"Максимальная просадка на {forecast_horizon}-дневном горизонте: {max_drawdown:.2f}%.")
-    if hold_text:
-        log_progress(hold_text)
 
 
 
