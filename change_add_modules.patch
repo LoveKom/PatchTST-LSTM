@@ -1,0 +1,769 @@
+diff --git a/README.md b/README.md
+index edd4d3cce8f774e25d575b05ede3ea4c79d50365..2726c16e82994629ba7105d6293d1950524c6d76 100644
+--- a/README.md
++++ b/README.md
+@@ -1,16 +1,21 @@
+-
+ # PatchTST-LSTM: Гибридная модель для прогнозирования криптовалюты
+ 
+ Проект сочетает возможности моделей Transformer (PatchTST) и LSTM с графическим интерфейсом для прогнозирования временных рядов (Bitcoin).
+ 
+ ## 📁 Содержимое проекта
+ 
+-- `transformer_lstm.py` — обучение моделей Transformer, LSTM и их гибрид (линейная регрессия).
++- `transformer_lstm.py` — основной файл, запускающий обучение и оценку моделей.
++- `data_utils.py` — загрузка и подготовка данных.
++- `models.py` — определения и конфигурации моделей.
++- `train_models.py` — обучение моделей и линейной регрессии.
++- `model_io.py` — сохранение и загрузка обученных моделей.
++- `metrics_calc.py` — вычисление метрик качества.
+ - `gui_predict.py` — графический интерфейс на Tkinter для загрузки моделей и визуального прогноза.
+ 
+ ## 🔧 Установка
+ 
+ ```bash
+ git clone https://github.com/yourusername/PatchTST-LSTM.git
+ cd PatchTST-LSTM
+ pip install -r requirements.txt
++```
+diff --git a/data_utils.py b/data_utils.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..6d3407ec3edef2aaa3a1e5a0dc9c10be93b6bc09
+--- /dev/null
++++ b/data_utils.py
+@@ -0,0 +1,91 @@
++import os
++from dataclasses import dataclass
++
++import pandas as pd
++import numpy as np
++import torch
++import yfinance as yf
++from sklearn.preprocessing import MinMaxScaler
++from torch.utils.data import Dataset
++
++
++class CryptoDataset(Dataset):
++    def __init__(self, data: pd.DataFrame, context_length: int, prediction_length: int):
++        self.data = data
++        self.context_length = context_length
++        self.prediction_length = prediction_length
++
++    def __len__(self) -> int:
++        return len(self.data) - self.context_length - self.prediction_length
++
++    def __getitem__(self, idx: int):
++        x = self.data['y_scaled'].values[idx:idx + self.context_length]
++        y = self.data['y_scaled'].values[idx + self.context_length:idx + self.context_length + self.prediction_length]
++        return {
++            'past_values': torch.tensor(x, dtype=torch.float32).unsqueeze(-1),
++            'future_values': torch.tensor(y, dtype=torch.float32).unsqueeze(-1)
++        }
++
++
++class WindowedDataset(Dataset):
++    def __init__(self, data: pd.DataFrame, window_length: int, prediction_length: int):
++        self.data = data['y_scaled'].values
++        self.window_length = window_length
++        self.prediction_length = prediction_length
++
++    def __len__(self) -> int:
++        return len(self.data) - self.window_length - self.prediction_length
++
++    def __getitem__(self, idx: int):
++        x = self.data[idx: idx + self.window_length]
++        y = self.data[idx + self.window_length: idx + self.window_length + self.prediction_length]
++        return {
++            'past_values': torch.tensor(x, dtype=torch.float32).unsqueeze(-1),
++            'future_values': torch.tensor(y, dtype=torch.float32).unsqueeze(-1)
++        }
++
++
++@dataclass
++class DataSplit:
++    train_dataset: CryptoDataset
++    val_dataset: CryptoDataset
++    test_dataset: CryptoDataset
++    lstm_train_data: pd.DataFrame
++    scaler: MinMaxScaler
++    raw_data: pd.DataFrame
++    test_data: pd.DataFrame
++
++
++def load_data(start_date: str, end_date: str, lstm_start: str, lstm_end: str,
++              train_split_ratio: float, val_split_ratio: float,
++              context_length: int, prediction_length: int, window_length: int,
++              path: str) -> DataSplit:
++    btc_data = yf.download('BTC-USD', start=start_date, end=end_date)
++    btc_data.reset_index(inplace=True)
++    os.makedirs(path, exist_ok=True)
++    btc_data.to_csv(os.path.join(path, 'btc_data_raw.csv'), index=False)
++
++    btc_data.rename(columns={'Date': 'ds', 'Close': 'y'}, inplace=True)
++    btc_data = btc_data[['ds', 'y']]
++    btc_data['ds'] = pd.to_datetime(btc_data['ds']).dt.strftime('%Y-%m-%d')
++    btc_data['y'] = pd.to_numeric(btc_data['y'], errors='coerce')
++    btc_data.dropna(inplace=True)
++
++    scaler = MinMaxScaler()
++    btc_data['y_scaled'] = scaler.fit_transform(btc_data[['y']])
++    btc_data.to_csv(os.path.join(path, 'btc_data.csv'), index=False)
++
++    train_size = int(len(btc_data) * train_split_ratio)
++    val_size = int(len(btc_data) * val_split_ratio)
++
++    train_data = btc_data.iloc[:train_size]
++    val_data = btc_data.iloc[train_size:train_size + val_size]
++    test_data = btc_data.iloc[train_size + val_size:]
++
++    train_dataset = CryptoDataset(train_data, context_length, prediction_length)
++    val_dataset = CryptoDataset(val_data, context_length, prediction_length)
++    test_dataset = CryptoDataset(test_data, context_length, prediction_length)
++
++    lstm_train_data = btc_data[(btc_data['ds'] >= lstm_start) & (btc_data['ds'] <= lstm_end)]
++
++    return DataSplit(train_dataset, val_dataset, test_dataset, lstm_train_data, scaler, btc_data, test_data)
+diff --git a/metrics_calc.py b/metrics_calc.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d75941abbe8d6dba8675df4d9e735deb15749fe0
+--- /dev/null
++++ b/metrics_calc.py
+@@ -0,0 +1,12 @@
++from typing import Tuple
++
++import numpy as np
++from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
++
++
++def compute_metrics(real: np.ndarray, pred: np.ndarray) -> Tuple[float, float, float, float]:
++    mae = mean_absolute_error(real, pred)
++    rmse = np.sqrt(mean_squared_error(real, pred))
++    mape = np.mean(np.abs((real - pred) / real)) * 100
++    r2 = r2_score(real, pred)
++    return mae, rmse, mape, r2
+diff --git a/model_io.py b/model_io.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a82c5e0a98b02a8631014fd5043691b9c8573a9d
+--- /dev/null
++++ b/model_io.py
+@@ -0,0 +1,25 @@
++import os
++import joblib
++import torch
++from typing import Tuple
++
++from models import LSTM, create_patch_model
++
++
++def save_models(path: str, patch_model, lstm_model, hyb_model, scaler) -> None:
++    os.makedirs(path, exist_ok=True)
++    torch.save(patch_model.state_dict(), os.path.join(path, 'transformer_model.pth'))
++    torch.save(lstm_model.state_dict(), os.path.join(path, 'lstm_model.pth'))
++    joblib.dump(hyb_model, os.path.join(path, 'hyb_model.pkl'))
++    joblib.dump(scaler, os.path.join(path, 'scaler.pkl'))
++
++
++def load_models(path: str, device: torch.device, context_length: int,
++                prediction_length: int, patch_length: int) -> Tuple:
++    patch_model = create_patch_model(context_length, prediction_length, patch_length, device)
++    patch_model.load_state_dict(torch.load(os.path.join(path, 'transformer_model.pth'), map_location=device))
++    lstm_model = LSTM().to(device)
++    lstm_model.load_state_dict(torch.load(os.path.join(path, 'lstm_model.pth'), map_location=device))
++    hyb_model = joblib.load(os.path.join(path, 'hyb_model.pkl'))
++    scaler = joblib.load(os.path.join(path, 'scaler.pkl'))
++    return patch_model, lstm_model, hyb_model, scaler
+diff --git a/models.py b/models.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bc81321c9c00233e58319edfdacb4dcb854b9e4a
+--- /dev/null
++++ b/models.py
+@@ -0,0 +1,24 @@
++import torch
++import torch.nn as nn
++from transformers import PatchTSTForPrediction, PatchTSTConfig
++
++
++class LSTM(nn.Module):
++    def __init__(self, input_size: int = 1, hidden_size: int = 32, num_layers: int = 7, output_size: int = 1):
++        super().__init__()
++        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
++        self.linear = nn.Linear(hidden_size, output_size)
++
++    def forward(self, x):
++        out, _ = self.lstm(x)
++        return self.linear(out[:, -1, :]).unsqueeze(-1)
++
++
++def create_patch_model(context_length: int, prediction_length: int, patch_length: int, device: torch.device):
++    config = PatchTSTConfig(
++        context_length=context_length,
++        prediction_length=prediction_length,
++        patch_length=patch_length,
++        num_input_channels=1,
++    )
++    return PatchTSTForPrediction(config).to(device)
+diff --git a/train_models.py b/train_models.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..70b4998d32bf40e84ef5908c33e2ec3e0db7dc87
+--- /dev/null
++++ b/train_models.py
+@@ -0,0 +1,111 @@
++import numpy as np
++import torch
++from sklearn.linear_model import LinearRegression
++from torch.utils.data import DataLoader
++from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
++
++from models import LSTM, create_patch_model
++from data_utils import CryptoDataset, WindowedDataset
++
++
++def train_patch_model(train_dataset: CryptoDataset, val_dataset: CryptoDataset,
++                      context_length: int, prediction_length: int, patch_length: int,
++                      num_epochs: int, batch_size: int, device: torch.device):
++    patch_model = create_patch_model(context_length, prediction_length, patch_length, device)
++    training_args = TrainingArguments(
++        output_dir="./results",
++        num_train_epochs=num_epochs,
++        do_eval=True,
++        per_device_train_batch_size=batch_size,
++        per_device_eval_batch_size=batch_size,
++        eval_strategy="epoch",
++        save_strategy="epoch",
++        save_total_limit=3,
++        load_best_model_at_end=True,
++        metric_for_best_model="eval_loss",
++        greater_is_better=False,
++        logging_steps=10,
++        label_names=["future_values"],
++        logging_strategy="epoch",
++        logging_dir="./logs/",
++    )
++    early_stopping_callback = EarlyStoppingCallback(
++        early_stopping_patience=10,
++        early_stopping_threshold=0.001,
++    )
++    trainer = Trainer(
++        model=patch_model,
++        args=training_args,
++        train_dataset=train_dataset,
++        eval_dataset=val_dataset,
++        callbacks=[early_stopping_callback],
++    )
++    trainer.train()
++    return patch_model
++
++
++def train_lstm_model(lstm_train_data: torch.utils.data.Dataset, val_data: torch.utils.data.Dataset,
++                     num_epochs: int, batch_size: int, device: torch.device,
++                     window_length: int, prediction_length: int,
++                     patience: int = 3, min_delta: float = 0.0001) -> LSTM:
++    lstm_model = LSTM().to(device)
++    criterion = torch.nn.MSELoss()
++    optimizer = torch.optim.Adam(lstm_model.parameters(), lr=0.001)
++
++    train_loader = DataLoader(WindowedDataset(lstm_train_data, window_length, prediction_length),
++                              batch_size=batch_size, shuffle=True)
++    val_loader = DataLoader(WindowedDataset(val_data, window_length, prediction_length),
++                            batch_size=batch_size, shuffle=False)
++
++    best_loss = np.inf
++    epochs_no_improve = 0
++    lstm_model.train()
++    for epoch in range(num_epochs):
++        epoch_loss = 0
++        for batch in train_loader:
++            optimizer.zero_grad()
++            loss = criterion(lstm_model(batch['past_values'].to(device)), batch['future_values'].to(device))
++            loss.backward()
++            optimizer.step()
++            epoch_loss += loss.item()
++        epoch_loss /= len(train_loader)
++
++        lstm_model.eval()
++        val_loss = 0
++        with torch.no_grad():
++            for batch in val_loader:
++                val_preds = lstm_model(batch['past_values'].to(device))
++                val_loss += criterion(val_preds, batch['future_values'].to(device)).item()
++        val_loss /= len(val_loader)
++
++        if best_loss - val_loss > min_delta:
++            best_loss = val_loss
++            epochs_no_improve = 0
++            torch.save(lstm_model.state_dict(), 'best_lstm_model.pth')
++        else:
++            epochs_no_improve += 1
++        if epochs_no_improve >= patience:
++            lstm_model.load_state_dict(torch.load('best_lstm_model.pth'))
++            break
++        lstm_model.train()
++    return lstm_model
++
++
++def train_hybrid_model(patch_model, lstm_model, val_dataset: CryptoDataset, device: torch.device) -> LinearRegression:
++    val_loader = DataLoader(val_dataset, batch_size=1)
++    X_hyb, y_hyb = [], []
++    patch_model.eval()
++    lstm_model.eval()
++    with torch.no_grad():
++        for sample in val_loader:
++            past_values = sample['past_values'].to(device)
++            future_values = sample['future_values'].cpu().numpy().flatten()
++            patch_pred = patch_model.generate(past_values).sequences.cpu().numpy().flatten()
++            lstm_pred = lstm_model(past_values).cpu().numpy().flatten()
++            X_hyb.append([patch_pred[0], lstm_pred[0]])
++            y_hyb.append(future_values[0])
++    X_hyb = np.array(X_hyb)
++    y_hyb = np.array(y_hyb)
++    hyb_model = LinearRegression()
++    hyb_model.fit(X_hyb, y_hyb)
++    return hyb_model
+diff --git a/transformer_lstm.py b/transformer_lstm.py
+index e2b944b8957e53f0fdf289b548ba1990ae69e500..8e1a7536a9b8324da3c47080e56e7d97c778173f 100644
+--- a/transformer_lstm.py
++++ b/transformer_lstm.py
+@@ -1,353 +1,106 @@
+-import joblib
+-import pandas as pd
+-import yfinance as yf
++import os
+ import numpy as np
+ import torch
+-import torch.nn as nn
+-from sklearn.preprocessing import MinMaxScaler
+-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+-from sklearn.linear_model import LinearRegression
+-from transformers import PatchTSTForPrediction, PatchTSTConfig, Trainer, TrainingArguments, EarlyStoppingCallback
+-from torch.utils.data import Dataset, DataLoader
+ import matplotlib.pyplot as plt
+-import os
+-from datetime import datetime
+ 
+-# Константы
++from data_utils import load_data
++from train_models import train_patch_model, train_lstm_model, train_hybrid_model
++from model_io import save_models
++from metrics_calc import compute_metrics
++
++
+ START_DATE, END_DATE = '2020-01-01', '2025-05-16'
+ LSTM_START_DATE, LSTM_END_DATE = '2020-01-01', '2025-05-16'
+ TRAIN_SPLIT_RATIO, VAL_SPLIT_RATIO = 0.7, 0.2
+ CONTEXT_LENGTH, PREDICTION_LENGTH, PATCH_LENGTH = 30, 1, 10
+ WINDOW_LENGTH = CONTEXT_LENGTH - 5
+ NUM_TRAIN_EPOCHS_TST = 20
+ NUM_TRAIN_EPOCHS_LSTM = 50
+ BATCH_SIZE = 16
+ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+ 
+-# Параметры Early Stopping
+-patience = 3
+-min_delta = 0.0001
+-best_loss = np.inf
+-epochs_no_improve = 0
+-
+-# Для сохранения новой модели
+-model_folder = f'model_{END_DATE}'
+-model_path = os.path.join('model', model_folder)
+-os.makedirs(model_path, exist_ok=True)
+-
+-# Датасеты
+-class CryptoDataset(Dataset):
+-    def __init__(self, data, context_length, prediction_length):
+-        self.data = data
+-        self.context_length = context_length
+-        self.prediction_length = prediction_length
+-
+-    def __len__(self):
+-        return len(self.data) - self.context_length - self.prediction_length
+-
+-    def __getitem__(self, idx):
+-        x = self.data['y_scaled'].values[idx:idx+self.context_length]
+-        y = self.data['y_scaled'].values[idx+self.context_length:idx+self.context_length+self.prediction_length]
+-        return {'past_values': torch.tensor(x, dtype=torch.float32).unsqueeze(-1),
+-                'future_values': torch.tensor(y, dtype=torch.float32).unsqueeze(-1)}
+-
+-
+-class WindowedDataset(Dataset):
+-    def __init__(self, data, window_length, prediction_length):
+-        self.data = data['y_scaled'].values
+-        self.window_length = window_length
+-        self.prediction_length = prediction_length
+-
+-    def __len__(self):
+-        return len(self.data) - self.window_length - self.prediction_length
+-
+-    def __getitem__(self, idx):
+-        x = self.data[idx: idx + self.window_length]
+-        y = self.data[idx + self.window_length: idx + self.window_length + self.prediction_length]
+-        return {'past_values': torch.tensor(x, dtype=torch.float32).unsqueeze(-1),
+-                'future_values': torch.tensor(y, dtype=torch.float32).unsqueeze(-1)}
+-
+-
+-# LSTM
+-class LSTM(nn.Module):
+-    def __init__(self, input_size=1, hidden_size=32, num_layers=7, output_size=1):
+-        super().__init__()
+-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+-        self.linear = nn.Linear(hidden_size, output_size)
+-
+-    def forward(self, x):
+-        out, _ = self.lstm(x)
+-        return self.linear(out[:, -1, :]).unsqueeze(-1)
+-
+-
+-# Загрузка и подготовка данных
+-btc_data = yf.download('BTC-USD', start=START_DATE, end=END_DATE)
+-btc_data.reset_index(inplace=True)
+-btc_data.to_csv('model/btc_data_raw.csv', index=False)  # исходные данные без обработки
+-btc_data = pd.read_csv('model/btc_data_raw.csv')
+-
+-# Переименовываем и выбираем только нужные столбцы
+-btc_data.rename(columns={'Date': 'ds', 'Close': 'y'}, inplace=True)
+-btc_data = btc_data[['ds', 'y']]  # оставляем только даты и цены закрытия
+-
+-# Приведение типов и масштабирование
+-btc_data['ds'] = pd.to_datetime(btc_data['ds']).dt.strftime('%Y-%m-%d')
+-btc_data['y'] = pd.to_numeric(btc_data['y'], errors='coerce')
+-
+-# Очистка от возможных NaN
+-btc_data.dropna(inplace=True)
+-
+-# Масштабируем данные
+-scaler = MinMaxScaler()
+-btc_data['y_scaled'] = scaler.fit_transform(btc_data[['y']])
+-
+-# сохраняем финальные обработанные данные
+-btc_data.to_csv(f'{model_path}/btc_data.csv', index=False)
+-
+-
+-
+-# Разделение данных
+-train_size = int(len(btc_data) * TRAIN_SPLIT_RATIO)
+-val_size = int(len(btc_data) * VAL_SPLIT_RATIO)
+-train_data, val_data = btc_data.iloc[:train_size], btc_data.iloc[train_size:train_size+val_size]
+-test_data = btc_data.iloc[train_size+val_size:]
+-
+-train_dataset = CryptoDataset(train_data, CONTEXT_LENGTH, PREDICTION_LENGTH)
+-val_dataset = CryptoDataset(val_data, CONTEXT_LENGTH, PREDICTION_LENGTH)
+-test_dataset = CryptoDataset(test_data, CONTEXT_LENGTH, PREDICTION_LENGTH)
+-lstm_train_data = btc_data[(btc_data['ds'] >= LSTM_START_DATE) & (btc_data['ds'] <= LSTM_END_DATE)]
+-
+-# Transformer PatchTST
+-patch_config = PatchTSTConfig(context_length=CONTEXT_LENGTH,
+-                              prediction_length=PREDICTION_LENGTH,
+-                              patch_length=PATCH_LENGTH,
+-                              num_input_channels=1)
+-patch_model = PatchTSTForPrediction(patch_config).to(DEVICE)
+-
+-# Параметры обучения
+-training_args = TrainingArguments(
+-    output_dir="./results",
+-    # overwrite_output_dir=True,
+-    num_train_epochs=NUM_TRAIN_EPOCHS_TST,
+-    do_eval=True,
+-    per_device_train_batch_size=BATCH_SIZE,
+-    per_device_eval_batch_size=BATCH_SIZE,
+-    eval_strategy="epoch",
+-    save_strategy="epoch",
+-    save_total_limit=3,
+-    load_best_model_at_end=True,
+-    metric_for_best_model="eval_loss",
+-    greater_is_better=False,
+-    logging_steps=10,
+-    label_names=["future_values"],
+-    logging_strategy="epoch",
+-    logging_dir="./logs/",)
+-
+-
+-early_stopping_callback = EarlyStoppingCallback(
+-    early_stopping_patience=10,
+-    early_stopping_threshold=0.001,)
+-
+-trainer = Trainer(model=patch_model,
+-                  args=training_args,
+-                  train_dataset=train_dataset,
+-                  eval_dataset=val_dataset,
+-                  callbacks=[early_stopping_callback])
+-
+-# Transformer fine-tuning c EarlyStopping
+-trainer.train()
+-
+-
+-lstm_model = LSTM().to(DEVICE)
+-criterion, optimizer = nn.MSELoss(), torch.optim.Adam(lstm_model.parameters(), lr=0.001)
+-windowed_train_loader = DataLoader(
+-    WindowedDataset(lstm_train_data, WINDOW_LENGTH, PREDICTION_LENGTH),
+-    batch_size=BATCH_SIZE, shuffle=True)
+-windowed_val_loader = DataLoader(
+-    WindowedDataset(val_data, WINDOW_LENGTH, PREDICTION_LENGTH),
+-    batch_size=BATCH_SIZE, shuffle=False
+-)
+-
+-
+-# LSTM с EarlyStopping
+-lstm_model.train()
+-
+-for epoch in range(NUM_TRAIN_EPOCHS_LSTM):
+-    epoch_loss = 0
+-    for batch in windowed_train_loader:
+-        optimizer.zero_grad()
+-        loss = criterion(lstm_model(batch['past_values'].to(DEVICE)), batch['future_values'].to(DEVICE))
+-        loss.backward()
+-        optimizer.step()
+-        epoch_loss += loss.item()
+-
+-    epoch_loss /= len(windowed_train_loader)
+-
+-    # Валидационная проверка
++MODEL_FOLDER = f'model_{END_DATE}'
++MODEL_PATH = os.path.join('model', MODEL_FOLDER)
++
++
++def main():
++    data = load_data(
++        START_DATE,
++        END_DATE,
++        LSTM_START_DATE,
++        LSTM_END_DATE,
++        TRAIN_SPLIT_RATIO,
++        VAL_SPLIT_RATIO,
++        CONTEXT_LENGTH,
++        PREDICTION_LENGTH,
++        WINDOW_LENGTH,
++        MODEL_PATH,
++    )
++
++    patch_model = train_patch_model(
++        data.train_dataset,
++        data.val_dataset,
++        CONTEXT_LENGTH,
++        PREDICTION_LENGTH,
++        PATCH_LENGTH,
++        NUM_TRAIN_EPOCHS_TST,
++        BATCH_SIZE,
++        DEVICE,
++    )
++
++    lstm_model = train_lstm_model(
++        data.lstm_train_data,
++        data.raw_data.iloc[len(data.train_dataset):len(data.train_dataset) + len(data.val_dataset)],
++        NUM_TRAIN_EPOCHS_LSTM,
++        BATCH_SIZE,
++        DEVICE,
++        WINDOW_LENGTH,
++        PREDICTION_LENGTH,
++    )
++
++    hyb_model = train_hybrid_model(patch_model, lstm_model, data.val_dataset, DEVICE)
++
++    save_models(MODEL_PATH, patch_model, lstm_model, hyb_model, data.scaler)
++
++    # Evaluation
++    test_loader = torch.utils.data.DataLoader(data.test_dataset, batch_size=1)
++    real_values, hyb_predictions, forecast_dates = [], [], []
++
++    patch_model.eval()
+     lstm_model.eval()
+-    val_loss = 0
+     with torch.no_grad():
+-        for batch in windowed_val_loader:
+-            val_preds = lstm_model(batch['past_values'].to(DEVICE))
+-            val_loss += criterion(val_preds, batch['future_values'].to(DEVICE)).item()
+-
+-    val_loss /= len(windowed_val_loader)
+-
+-    print(f"Epoch {epoch+1}/{NUM_TRAIN_EPOCHS_LSTM}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_loss:.4f}")
+-
+-    # Проверка Early Stopping
+-    if best_loss - val_loss > min_delta:
+-        best_loss = val_loss
+-        epochs_no_improve = 0
+-        torch.save(lstm_model.state_dict(), 'best_lstm_model.pth')  # Сохраняем лучшую модель
+-    else:
+-        epochs_no_improve += 1
+-
+-    if epochs_no_improve >= patience:
+-        print("Early stopping triggered!")
+-        lstm_model.load_state_dict(torch.load('best_lstm_model.pth'))  # Загружаем лучшую модель
+-        break
+-
+-    lstm_model.train()
+-
+-
+-val_loader_hyb = DataLoader(val_dataset, batch_size=1)
+-
+-X_hyb, y_hyb = [], []
+-
+-patch_model.eval()
+-lstm_model.eval()
+-
+-with torch.no_grad():
+-    for sample in val_loader_hyb:
+-        past_values = sample['past_values'].to(DEVICE)
+-        future_values = sample['future_values'].cpu().numpy().flatten()
+-
+-        patch_pred = patch_model.generate(past_values).sequences.cpu().numpy().flatten()
+-        lstm_pred = lstm_model(past_values).cpu().numpy().flatten()
+-
+-        X_hyb.append([patch_pred[0], lstm_pred[0]])
+-        y_hyb.append(future_values[0])
+-
+-X_hyb = np.array(X_hyb)
+-y_hyb = np.array(y_hyb)
+-
+-# Обучение гибрид-модели (линейная регрессия)
+-hyb_model = LinearRegression()
+-hyb_model.fit(X_hyb, y_hyb)
+-
+-
+-torch.save(patch_model.state_dict(), f'{model_path}/transformer_model.pth')
+-torch.save(lstm_model.state_dict(), f'{model_path}/lstm_model.pth')
+-joblib.dump(hyb_model, f'{model_path}/hyb_model.pkl')
+-joblib.dump(scaler, f'{model_path}/scaler.pkl')
+-
+-
+-# Прогноз на тесте
+-real_values, patch_predictions, lstm_predictions, hyb_predictions, forecast_dates = [], [], [], [], []
+-
+-test_loader_hyb = DataLoader(test_dataset, batch_size=1)
+-
+-with torch.no_grad():
+-    for idx, sample in enumerate(test_loader_hyb):
+-        past_values = sample['past_values'].to(DEVICE)
+-        real_future = sample['future_values'].cpu().numpy().flatten()
+-
+-        patch_pred = patch_model.generate(past_values).sequences.cpu().numpy().flatten()
+-        lstm_pred = lstm_model(past_values).cpu().numpy().flatten()
+-
+-        hyb_input = np.array([patch_pred, lstm_pred]).reshape(1, -1)
+-        hyb_pred = hyb_model.predict(hyb_input)
+-
+-        real_values.extend(real_future)
+-        patch_predictions.extend(patch_pred)
+-        lstm_predictions.extend(lstm_pred)
+-        hyb_predictions.extend(hyb_pred)
+-        forecast_dates.append(pd.to_datetime(test_data['ds'].iloc[idx + CONTEXT_LENGTH]))
+-
+-# Обратная нормализация
+-real_prices = scaler.inverse_transform(np.array(real_values).reshape(-1, 1)).flatten()
+-# patch_prices = scaler.inverse_transform(np.array(patch_predictions).reshape(-1, 1)).flatten()
+-# lstm_prices = scaler.inverse_transform(np.array(lstm_predictions).reshape(-1, 1)).flatten()
+-hyb_prices = scaler.inverse_transform(np.array(hyb_predictions).reshape(-1, 1)).flatten()
+-
+-# Метрики
+-# models = {'Transformer': patch_prices, 'LSTM': lstm_prices, 'Hybrid-Model': hyb_prices}
+-
+-
+-mae = mean_absolute_error(real_prices, hyb_prices)
+-rmse = np.sqrt(mean_squared_error(real_prices, hyb_prices))
+-mape = np.mean(np.abs((real_prices - hyb_prices) / real_prices)) * 100
+-r2 = r2_score(real_prices, hyb_prices)
+-
+-print(f"\nHybrid-Model Metrics:")
+-print(f"MAE: {mae:.2f}")
+-print(f"RMSE: {rmse:.2f}")
+-print(f"MAPE: {mape:.2f}%")
+-print(f"R^2: {r2:.2f}")
+-
+-# График прогнозов
+-plt.figure(figsize=(14, 7))
+-plt.plot(forecast_dates, real_prices, label='Реальные данные', color='black')
+-plt.plot(forecast_dates, hyb_prices, label='Гибридная модель прогноз', alpha=0.9, linestyle='--')
+-
+-plt.xlabel('Дата')
+-plt.ylabel('Цена BTC (USD)')
+-plt.title('Прогнозы модели на тестовой выборке')
+-plt.legend()
+-plt.grid(True)
+-plt.show()
+-
+-
+-
+-# авторегрессионная проверка
+-forecast_horizon = 7  # на сколько шагов вперед прогнозируем
+-initial_context = test_dataset[0]['past_values'].to(DEVICE).unsqueeze(0)
+-
+-# patch_model.eval()
+-# lstm_model.eval()
+-hybrid_predictions = []
+-
+-current_input = initial_context.clone()
+-
+-with torch.no_grad():
+-    for step in range(forecast_horizon):
+-        # прогноз Transformer
+-        patch_pred = patch_model.generate(current_input).sequences.cpu().numpy().flatten()
+-
+-        # прогноз LSTM
+-        lstm_pred = lstm_model(current_input).cpu().numpy().flatten()
+-
+-        # мета-прогноз
+-        hyb_input = np.array([patch_pred[0], lstm_pred[0]]).reshape(1, -1)
+-        hyb_pred = hyb_model.predict(hyb_input)
+-        hybrid_predictions.append(hyb_pred[0])
+-
+-        # новый вход — используем мета-прогноз
+-        new_input = np.append(current_input.cpu().numpy().flatten()[1:], hyb_pred)
+-        current_input = torch.tensor(new_input, dtype=torch.float32).unsqueeze(0).unsqueeze(-1).to(DEVICE)
+-
+-# Обратная нормализация
+-hybrid_predictions_real_scale = scaler.inverse_transform(np.array(hybrid_predictions).reshape(-1, 1)).flatten()
+-
+-# Реальные значения
+-real_future_values = scaler.inverse_transform(
+-    test_data['y_scaled'].values[CONTEXT_LENGTH:CONTEXT_LENGTH + forecast_horizon].reshape(-1, 1)
+-).flatten()
+-
+-# Метрики и график
+-mae_hybrid = mean_absolute_error(real_future_values, hybrid_predictions_real_scale)
+-rmse_hybrid = np.sqrt(mean_squared_error(real_future_values, hybrid_predictions_real_scale))
+-
+-print(f"Авторегрессионный прогноз гибридной модели на {forecast_horizon} шагов:")
+-print(f"MAE: {mae_hybrid:.2f}, RMSE: {rmse_hybrid:.2f}")
+-
+-plt.figure(figsize=(12, 6))
+-plt.plot(range(forecast_horizon), real_future_values, label='Реальные значения')
+-plt.plot(range(forecast_horizon), hybrid_predictions_real_scale, label='Авторегрессионный прогноз Гибридной модели')
+-plt.xlabel('Шаг прогноза')
+-plt.ylabel('Цена BTC (USD)')
+-plt.title('Авторегрессионный прогноз Гибридной модели (Transformer + LSTM)')
+-plt.legend()
+-plt.grid(True)
+-plt.show()
++        for idx, sample in enumerate(test_loader):
++            past_values = sample['past_values'].to(DEVICE)
++            real_future = sample['future_values'].cpu().numpy().flatten()
++            patch_pred = patch_model.generate(past_values).sequences.cpu().numpy().flatten()
++            lstm_pred = lstm_model(past_values).cpu().numpy().flatten()
++            hyb_input = np.array([patch_pred, lstm_pred]).reshape(1, -1)
++            hyb_pred = hyb_model.predict(hyb_input)
++            real_values.extend(real_future)
++            hyb_predictions.extend(hyb_pred)
++            forecast_dates.append(data.test_data['ds'].iloc[idx + CONTEXT_LENGTH])
++
++    real_prices = data.scaler.inverse_transform(np.array(real_values).reshape(-1, 1)).flatten()
++    hyb_prices = data.scaler.inverse_transform(np.array(hyb_predictions).reshape(-1, 1)).flatten()
++
++    mae, rmse, mape, r2 = compute_metrics(real_prices, hyb_prices)
++
++    print("\nHybrid-Model Metrics:")
++    print(f"MAE: {mae:.2f}")
++    print(f"RMSE: {rmse:.2f}")
++    print(f"MAPE: {mape:.2f}%")
++    print(f"R^2: {r2:.2f}")
++
++    plt.figure(figsize=(14, 7))
++    plt.plot(forecast_dates, real_prices, label='Реальные данные', color='black')
++    plt.plot(forecast_dates, hyb_prices, label='Гибридная модель прогноз', alpha=0.9, linestyle='--')
++    plt.xlabel('Дата')
++    plt.ylabel('Цена BTC (USD)')
++    plt.title('Прогнозы модели на тестовой выборке')
++    plt.legend()
++    plt.grid(True)
++    plt.show()
++
++
++if __name__ == '__main__':
++    main()
