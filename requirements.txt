@@ -7,3 +7,4 @@ matplotlib
 yfinance
 joblib
 tk
+accelerate>=0.26.0

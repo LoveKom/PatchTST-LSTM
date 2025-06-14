@@ -60,15 +60,23 @@ def load_data(start_date: str, end_date: str, lstm_start: str, lstm_end: str,
               train_split_ratio: float, val_split_ratio: float,
               context_length: int, prediction_length: int, window_length: int,
               path: str) -> DataSplit:
-    btc_data = yf.download('BTC-USD', start=start_date, end=end_date)
+    btc_data = yf.download(
+        'BTC-USD',
+        start=start_date,
+        end=end_date,
+        group_by='column',
+        auto_adjust=False
+    )
     btc_data.reset_index(inplace=True)
     os.makedirs(path, exist_ok=True)
     btc_data.to_csv(os.path.join(path, 'btc_data_raw.csv'), index=False)
 
-    btc_data.rename(columns={'Date': 'ds', 'Close': 'y'}, inplace=True)
+    close_series = btc_data['Close']
+    if isinstance(close_series, pd.DataFrame):
+        close_series = close_series.iloc[:, 0]
+    btc_data['ds'] = pd.to_datetime(btc_data['Date']).dt.strftime('%Y-%m-%d')
+    btc_data['y'] = pd.to_numeric(close_series, errors='coerce')
     btc_data = btc_data[['ds', 'y']]
-    btc_data['ds'] = pd.to_datetime(btc_data['ds']).dt.strftime('%Y-%m-%d')
-    btc_data['y'] = pd.to_numeric(btc_data['y'], errors='coerce')
     btc_data.dropna(inplace=True)
 
     scaler = MinMaxScaler()
