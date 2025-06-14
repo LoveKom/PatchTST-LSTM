@@ -1,6 +1,7 @@
 # Игнорируем папки с моделями
 model/
-results/
+results_transformer/
+results_lstm
 
 # Игнорируем веса моделей
 *.pth
