@@ -128,6 +128,7 @@ def load_model():
         return
 
     hide_progress_bar()
+    clear_progress_log()
 
     try:
         global patch_model, lstm_model, hyb_model, scaler, btc_data
@@ -353,10 +354,14 @@ def log_progress(message: str):
     progress_text.see(tk.END)
     progress_text.configure(state='disabled')
 
+def clear_progress_log():
+    progress_text.configure(state='normal')
+    progress_text.delete('1.0', tk.END)
+    progress_text.configure(state='disabled')
+
 def show_progress_bar():
     progress_bar.pack(fill=tk.X, padx=10, pady=(0, 10))
     progress_bar.start()
-
 
 def hide_progress_bar():
     progress_bar.stop()
