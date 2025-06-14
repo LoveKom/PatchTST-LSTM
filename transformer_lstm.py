@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from data_utils import load_data
 from train_models import train_patch_model, train_lstm_model, train_hybrid_model
@@ -99,6 +100,16 @@ def main():
     plt.title('Прогнозы модели на тестовой выборке')
     plt.legend()
     plt.grid(True)
+
+    ax = plt.gca()
+    # Установить формат даты и интервал меток (например, каждые 7 дней)
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    # Повернуть подписи
+    plt.xticks(rotation=45)
+    # Сделать сетку реже или отключить её по X
+    ax.grid(True, which='major', axis='y')  # только по оси Y
+
     plt.show()
 
 
