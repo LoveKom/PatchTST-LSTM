@@ -94,6 +94,7 @@ def load_data(start_date: str, end_date: str, lstm_start: str, lstm_end: str,
     val_dataset = CryptoDataset(val_data, context_length, prediction_length)
     test_dataset = CryptoDataset(test_data, context_length, prediction_length)
 
-    lstm_train_data = btc_data[(btc_data['ds'] >= lstm_start) & (btc_data['ds'] <= lstm_end)]
+    # lstm_train_data = btc_data[(btc_data['ds'] >= lstm_start) & (btc_data['ds'] <= lstm_end)]
+    lstm_train_data = train_data
 
     return DataSplit(train_dataset, val_dataset, test_dataset, lstm_train_data, scaler, btc_data, test_data)

@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import TimeSeriesSplit
 from torch.utils.data import DataLoader
 from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
 
@@ -112,3 +113,28 @@ def train_hybrid_model(patch_model, lstm_model, val_dataset: CryptoDataset, devi
     hyb_model = LinearRegression()
     hyb_model.fit(X_hyb, y_hyb)
     return hyb_model
+
+def walk_forward_patch_cv(train_dataset: CryptoDataset, n_splits: int, context_length: int,
+                          prediction_length: int, patch_length: int, num_epochs: int,
+                          batch_size: int, device: torch.device):
+    df = train_dataset.data.reset_index(drop=True)
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    model = None
+    for train_idx, val_idx in tscv.split(df):
+        train_ds = CryptoDataset(df.iloc[train_idx].reset_index(drop=True), context_length, prediction_length)
+        val_ds = CryptoDataset(df.iloc[val_idx].reset_index(drop=True), context_length, prediction_length)
+        model = train_patch_model(train_ds, val_ds, context_length, prediction_length,
+                                 patch_length, num_epochs, batch_size, device)
+    return model
+
+
+def walk_forward_lstm_cv(train_df, n_splits: int, num_epochs: int, batch_size: int,
+                         device: torch.device, window_length: int, prediction_length: int):
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    model = None
+    for train_idx, val_idx in tscv.split(train_df):
+        tr_df = train_df.iloc[train_idx].reset_index(drop=True)
+        val_df = train_df.iloc[val_idx].reset_index(drop=True)
+        model = train_lstm_model(tr_df, val_df, num_epochs, batch_size, device,
+                                 window_length, prediction_length)
+    return model

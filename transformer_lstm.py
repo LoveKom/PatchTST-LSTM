@@ -6,7 +6,9 @@ import matplotlib.dates as mdates
 import pandas as pd
 
 from data_utils import load_data
-from train_models import train_patch_model, train_lstm_model, train_hybrid_model
+# from train_models import train_patch_model, train_lstm_model, train_hybrid_model
+from train_models import (train_hybrid_model, walk_forward_patch_cv,
+                          walk_forward_lstm_cv)
 from model_io import save_models
 from metrics_calc import compute_metrics
 
@@ -19,6 +21,7 @@ WINDOW_LENGTH = CONTEXT_LENGTH - 5
 NUM_TRAIN_EPOCHS_TST = 20
 NUM_TRAIN_EPOCHS_LSTM = 50
 BATCH_SIZE = 16
+CV_SPLITS = 3
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 MODEL_FOLDER = f'model_{END_DATE}'
@@ -39,9 +42,9 @@ def main():
         MODEL_PATH,
     )
 
-    patch_model = train_patch_model(
+    patch_model = walk_forward_patch_cv(
         data.train_dataset,
-        data.val_dataset,
+        CV_SPLITS,
         CONTEXT_LENGTH,
         PREDICTION_LENGTH,
         PATCH_LENGTH,
@@ -50,9 +53,9 @@ def main():
         DEVICE,
     )
 
-    lstm_model = train_lstm_model(
+    lstm_model = walk_forward_lstm_cv(
         data.lstm_train_data,
-        data.raw_data.iloc[len(data.train_dataset):len(data.train_dataset) + len(data.val_dataset)],
+        CV_SPLITS,
         NUM_TRAIN_EPOCHS_LSTM,
         BATCH_SIZE,
         DEVICE,
