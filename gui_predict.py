@@ -254,6 +254,24 @@ def forecast_autoregressive():
     for date, prediction in zip(forecast_dates, hybrid_predictions_real_scale):
         forecast_table.insert('', 'end', values=(date.strftime('%Y-%m-%d'), f"${prediction:,.2f}"))
 
+    # --- Recommendations text ---
+    min_price = float(np.min(hybrid_predictions_real_scale))
+    max_price = float(np.max(hybrid_predictions_real_scale))
+    last_price = float(btc_data['y'].iloc[-1])
+    last_forecast = float(hybrid_predictions_real_scale[-1])
+    pct_change = (last_forecast - last_price) / last_price * 100
+    direction = "рост" if pct_change >= 0 else "снижение"
+    trend_assessment = "благоприятный" if pct_change >= 0 else "неблагоприятный"
+    action_text = "покупка и удержание" if pct_change >= 0 else "продажа и ожидание коррекции"
+
+    recommendation = (
+        f"Прогноз диапазона цены: от {min_price:.2f} до {max_price:.2f} USD за ближайшие {forecast_horizon} дней\n\n"
+        f"Рекомендация:\n"
+        f"Ожидается {direction} на {abs(pct_change):.2f}% — тренд оценивается как {trend_assessment}.\n"
+        f"Совет: {action_text} на период прогноза"
+    )
+
+    log_progress(recommendation)
 
 
 
