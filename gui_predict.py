@@ -11,6 +11,10 @@ from tkinter import ttk, filedialog, messagebox
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch import nn
 from transformers import PatchTSTForPrediction, PatchTSTConfig
+from datetime import datetime, timedelta
+import threading
+import importlib
+import os
 
 matplotlib.use('TkAgg')
 START_DATE, END_DATE = '2020-01-01', '2025-05-01'
@@ -155,6 +159,53 @@ def load_model():
     except Exception as e:
         messagebox.showerror("Ошибка загрузки", str(e))
 
+def train_model():
+    train_window = tk.Toplevel(root)
+    train_window.title("Обучить модель")
+
+    tk.Label(train_window, text="Дата начала (YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5)
+    start_entry = tk.Entry(train_window)
+    start_entry.grid(row=0, column=1, padx=5, pady=5)
+
+    tk.Label(train_window, text="Дата окончания (YYYY-MM-DD):").grid(row=1, column=0, padx=5, pady=5)
+    end_entry = tk.Entry(train_window)
+    end_entry.grid(row=1, column=1, padx=5, pady=5)
+
+    default_end = (datetime.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+    default_start = (datetime.today() - timedelta(days=1) - timedelta(days=365*5)).strftime('%Y-%m-%d')
+    start_entry.insert(0, default_start)
+    end_entry.insert(0, default_end)
+
+    def start_training():
+        s = start_entry.get()
+        e = end_entry.get()
+        train_window.destroy()
+        threading.Thread(target=run_training, args=(s, e), daemon=True).start()
+
+    tk.Button(train_window, text="Начать обучение", command=start_training).grid(row=2, column=0, columnspan=2, pady=10)
+
+
+def run_training(start_date: str, end_date: str):
+    root.after(0, log_progress, f"Старт обучения с {start_date} по {end_date}...")
+    try:
+        import transformer_lstm
+        importlib.reload(transformer_lstm)
+
+        transformer_lstm.START_DATE = start_date
+        transformer_lstm.END_DATE = end_date
+        transformer_lstm.LSTM_START_DATE = start_date
+        transformer_lstm.LSTM_END_DATE = end_date
+        transformer_lstm.MODEL_FOLDER = f"model_{end_date}"
+        transformer_lstm.MODEL_PATH = os.path.join('model', transformer_lstm.MODEL_FOLDER)
+
+        transformer_lstm.main()
+        root.after(0, log_progress, "Обучение завершено.")
+        messagebox.showinfo("Обучение", "Обучение успешно завершено")
+    except Exception as exc:
+        root.after(0, log_progress, f"Ошибка обучения: {exc}")
+        messagebox.showerror("Ошибка", str(exc))
+
+
 def forecast_autoregressive():
     forecast_horizon = int(forecast_spinbox.get())
     context_length = CONTEXT_LENGTH
@@ -210,7 +261,7 @@ menu_bar = tk.Menu(root)
 
 file_menu = tk.Menu(menu_bar, tearoff=0)
 file_menu.add_command(label="Загрузить модель", command=load_model)
-file_menu.add_command(label="Обучить модель")
+file_menu.add_command(label="Обучить модель", command=train_model)
 file_menu.add_separator()
 file_menu.add_command(label="Выход", command=root.quit)
 menu_bar.add_cascade(label="Файл", menu=file_menu)
@@ -285,6 +336,12 @@ progress_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 scrollbar = tk.Scrollbar(progress_frame, command=progress_text.yview)
 scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 progress_text['yscrollcommand'] = scrollbar.set
+
+def log_progress(message: str):
+    progress_text.configure(state='normal')
+    progress_text.insert(tk.END, message + '\n')
+    progress_text.see(tk.END)
+    progress_text.configure(state='disabled')
 
 # Запуск окна приложения
 root.protocol("WM_DELETE_WINDOW", on_closing)
