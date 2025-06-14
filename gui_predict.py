@@ -149,7 +149,6 @@ def load_model():
         scaler = joblib.load(f'{model_dir}/scaler.pkl')
 
         # Загрузка корректно предварительно обработанных данных
-        # winsow_cool.py (правильная загрузка файла)
         btc_data = pd.read_csv(f'{model_dir}/btc_data.csv', parse_dates=['ds'])
 
         messagebox.showinfo("Загрузка", "Модель и данные успешно загружены!")
