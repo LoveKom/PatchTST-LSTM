@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import threading
 import importlib
 import os
+from metrics_calc import compute_max_drawdown
 
 matplotlib.use('TkAgg')
 START_DATE, END_DATE = '2020-01-01', '2025-05-01'
@@ -263,6 +264,9 @@ def forecast_autoregressive():
     direction = "рост" if pct_change >= 0 else "снижение"
     trend_assessment = "благоприятный" if pct_change >= 0 else "неблагоприятный"
     action_text = "покупка и удержание" if pct_change >= 0 else "продажа и ожидание коррекции"
+    max_drawdown = compute_max_drawdown(np.array(hybrid_predictions_real_scale))
+
+    hold_text = "Изменение цены не превышает 1%, лучше удерживать." if abs(pct_change) <= 1 else ""
 
     recommendation = (
         f"Прогноз диапазона цены: от {min_price:.2f} до {max_price:.2f} USD за ближайшие {forecast_horizon} дней\n\n"
@@ -272,6 +276,9 @@ def forecast_autoregressive():
     )
 
     log_progress(recommendation)
+    log_progress(f"Максимальная просадка на {forecast_horizon}-дневном горизонте: {max_drawdown:.2f}%.")
+    if hold_text:
+        log_progress(hold_text)
 
 
 
