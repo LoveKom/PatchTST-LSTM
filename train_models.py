@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 from sklearn.linear_model import LinearRegression
@@ -13,7 +14,7 @@ def train_patch_model(train_dataset: CryptoDataset, val_dataset: CryptoDataset,
                       num_epochs: int, batch_size: int, device: torch.device):
     patch_model = create_patch_model(context_length, prediction_length, patch_length, device)
     training_args = TrainingArguments(
-        output_dir="./results",
+        output_dir="./results_transformer",
         num_train_epochs=num_epochs,
         do_eval=True,
         per_device_train_batch_size=batch_size,
@@ -60,6 +61,8 @@ def train_lstm_model(lstm_train_data: torch.utils.data.Dataset, val_data: torch.
     best_loss = np.inf
     epochs_no_improve = 0
     lstm_model.train()
+    os.makedirs('results_lstm', exist_ok=True)
+    best_model_path = os.path.join('results_lstm', 'best_lstm_model.pth')
     for epoch in range(num_epochs):
         epoch_loss = 0
         for batch in train_loader:
@@ -81,11 +84,11 @@ def train_lstm_model(lstm_train_data: torch.utils.data.Dataset, val_data: torch.
         if best_loss - val_loss > min_delta:
             best_loss = val_loss
             epochs_no_improve = 0
-            torch.save(lstm_model.state_dict(), 'best_lstm_model.pth')
+            torch.save(lstm_model.state_dict(), best_model_path)
         else:
             epochs_no_improve += 1
         if epochs_no_improve >= patience:
-            lstm_model.load_state_dict(torch.load('best_lstm_model.pth'))
+            lstm_model.load_state_dict(torch.load(best_model_path))
             break
         lstm_model.train()
     return lstm_model
