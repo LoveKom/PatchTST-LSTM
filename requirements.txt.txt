@@ -1,0 +1,9 @@
+torch>=1.10
+transformers>=4.35
+numpy
+pandas
+scikit-learn
+matplotlib
+yfinance
+joblib
+tk
