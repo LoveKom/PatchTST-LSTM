@@ -1,7 +1,6 @@
 import os
 import torch
 from data_utils import load_data
-# from train_models import train_patch_model, train_lstm_model, train_hybrid_model
 from train_models import (train_hybrid_model, walk_forward_patch_cv,
                           walk_forward_lstm_cv)
 from model_io import save_models
